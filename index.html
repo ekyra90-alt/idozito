@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Dalangol Időzítő</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body{font-family:system-ui,sans-serif}
+  .active-line{border-color:#7c3aed!important;background:#f5f3ff!important;box-shadow:0 0 0 2px #ddd6fe}
+  .loop-active{outline:2px solid #f59e0b}
+  input[type=number]{-moz-appearance:textfield}
+  textarea{-webkit-appearance:none}
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<div class="max-w-2xl mx-auto p-3 pb-24">
+
+  <h1 class="text-xl font-black mb-3 text-violet-700">🎧 Dalangol Időzítő</h1>
+
+  <!-- Hangfájl + vezérlés -->
+  <div class="sticky top-0 bg-slate-50 z-20 pb-2 border-b border-slate-200 mb-4">
+    <input type="file" id="audioInput" accept="audio/*" class="w-full mb-2 p-2 border rounded-lg bg-white text-sm">
+    <audio id="audio" controls class="w-full mb-2"></audio>
+    <div class="flex gap-2">
+      <button onclick="seek(-5)" class="flex-1 bg-slate-200 py-2.5 rounded-lg font-bold active:bg-slate-300">-5s</button>
+      <button onclick="seek(5)" class="flex-1 bg-slate-200 py-2.5 rounded-lg font-bold active:bg-slate-300">+5s</button>
+      <button onclick="togglePlay()" id="playBtn" class="flex-1 bg-violet-600 text-white py-2.5 rounded-lg font-bold active:bg-violet-700">▶ Lejátszás</button>
+    </div>
+    <div class="flex gap-2 mt-2" id="speedControls">
+      <button onclick="setSpeed(0.5, this)" class="speed-btn flex-1 bg-slate-200 py-1.5 rounded-lg font-bold text-sm">0.5x</button>
+      <button onclick="setSpeed(0.75, this)" class="speed-btn flex-1 bg-slate-200 py-1.5 rounded-lg font-bold text-sm">0.75x</button>
+      <button onclick="setSpeed(1, this)" class="speed-btn flex-1 bg-violet-600 text-white py-1.5 rounded-lg font-bold text-sm">1x</button>
+    </div>
+
+    <!-- Teleprompter: mindig látszik, ez segít olvasni lejátszás közben -->
+    <div id="teleprompter" class="mt-2 bg-slate-900 text-white rounded-lg p-2.5 min-h-[4.2rem]">
+      <div id="tpEn" class="font-bold text-base leading-snug break-words">– nincs aktív sor –</div>
+      <div id="tpHu" class="text-slate-300 text-sm leading-snug break-words mt-0.5"></div>
+    </div>
+
+    <!-- Loop állapotsáv, csak ha aktív -->
+    <div id="loopBar" class="hidden mt-2 bg-amber-100 border border-amber-400 rounded-lg p-2 flex items-center gap-2 flex-wrap">
+      <span class="text-amber-800 font-bold text-xs flex-1" id="loopLabel">🔁 Loop</span>
+      <button onclick="nudgeLoop(-0.1)" class="bg-amber-200 px-2 py-1.5 rounded font-bold text-xs">start −0.1</button>
+      <button onclick="nudgeLoop(0.1)" class="bg-amber-200 px-2 py-1.5 rounded font-bold text-xs">start +0.1</button>
+      <button onclick="stopLoop()" class="bg-red-500 text-white px-3 py-1.5 rounded font-bold text-xs">⏹ Stop</button>
+    </div>
+  </div>
+
+  <!-- Dal metaadatok -->
+  <div class="bg-white border rounded-xl p-3 mb-4 space-y-2">
+    <h2 class="font-bold text-sm text-slate-500">Dal adatai</h2>
+    <input id="songId" placeholder="dal id (pl. hipochondria)" class="w-full border p-2 rounded text-sm">
+    <input id="songTitle" placeholder="Dal címe" class="w-full border p-2 rounded text-sm">
+    <input id="mp3name" placeholder="mp3 fájlnév (pl. Hipochondria.mp3)" class="w-full border p-2 rounded text-sm">
+    <input id="fallback" placeholder="Tartalék mp3 link (csak ha külső szerveren is van, egyébként hagyd üresen)" class="w-full border p-2 rounded text-sm">
+  </div>
+
+  <!-- Szövegbevitel -->
+  <div class="bg-white border rounded-xl p-3 mb-4">
+    <h2 class="font-bold text-sm text-slate-500 mb-2">Dalszöveg bevitele</h2>
+    <p class="text-xs text-slate-400 mb-2">
+      Új versszak: írj egy önálló sort <code class="bg-slate-100 px-1">|</code> jel NÉLKÜL (pl. <code class="bg-slate-100 px-1">Refrén</code> vagy <code class="bg-slate-100 px-1">## Refrén</code>)<br>
+      Énekelt sor: <code class="bg-slate-100 px-1">angol szöveg | magyar fordítás</code>
+    </p>
+    <textarea id="lyricInput" class="w-full h-40 border p-2 rounded-lg font-mono text-xs" placeholder="Bevezető
+I check my body every hour. | Minden órában ellenőrzöm a testem.
+I feel I lose my physical power. | Érzem, hogy elveszítem a fizikai erőmet.
+
+Refrén
+I am terribly **unwell** tonight, | Szörnyen rosszul vagyok ma éjjel,
+..."></textarea>
+    <button onclick="parseLyrics()" class="w-full mt-2 bg-slate-800 text-white py-2.5 rounded-lg font-bold active:bg-slate-900">Betöltés / Frissítés</button>
+  </div>
+
+  <!-- Sorok listája -->
+  <div id="verseList" class="space-y-4 mb-4"></div>
+
+  <!-- Dal vége -->
+  <div class="bg-white border rounded-xl p-3 mb-4 flex items-center gap-2">
+    <label class="text-sm font-bold text-slate-500 flex-shrink-0">Utolsó sor vége (mp):</label>
+    <input type="number" step="0.1" id="songEnd" class="border p-2 rounded w-24 text-sm" onchange="render()">
+    <button onclick="document.getElementById('songEnd').value = audio.currentTime.toFixed(1); render();" class="bg-yellow-500 text-white px-3 py-2 rounded-lg text-sm font-bold active:bg-yellow-600">MOST</button>
+  </div>
+
+  <!-- Export -->
+  <div class="bg-white border rounded-xl p-3">
+    <h2 class="font-bold mb-2">Exportálás (illeszd be az adat.js-be)</h2>
+    <textarea id="exportArea" class="w-full h-56 p-2 border rounded font-mono text-xs mb-2 bg-slate-50"></textarea>
+    <div class="grid grid-cols-2 gap-2">
+      <button onclick="exportData()" class="bg-purple-600 text-white py-2.5 rounded-lg font-bold active:bg-purple-700">Export frissítése</button>
+      <button onclick="copyExport()" class="bg-green-600 text-white py-2.5 rounded-lg font-bold active:bg-green-700">Másolás</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const audio = document.getElementById('audio');
+let verses = []; // [{title, manualStart, manualEnd, lines:[{text,hungarian,start}]}]
+let loopRegion = null; // {start, end, kind:'line'|'verse', vi, li, label}
+
+document.getElementById('audioInput').onchange = (e) => {
+  if (e.target.files.length > 0) {
+    audio.src = URL.createObjectURL(e.target.files[0]);
+    setSpeed(1);
+  }
+};
+
+function setSpeed(rate, btnEl){
+  audio.playbackRate = rate;
+  document.querySelectorAll('.speed-btn').forEach(btn => {
+    btn.classList.remove('bg-violet-600', 'text-white');
+    btn.classList.add('bg-slate-200');
+  });
+  if (btnEl){ btnEl.classList.remove('bg-slate-200'); btnEl.classList.add('bg-violet-600','text-white'); }
+  else {
+    const target = [...document.querySelectorAll('.speed-btn')].find(b => b.textContent.trim() === rate + 'x');
+    if (target){ target.classList.remove('bg-slate-200'); target.classList.add('bg-violet-600','text-white'); }
+  }
+}
+audio.onloadedmetadata = () => {
+  const endInput = document.getElementById('songEnd');
+  if (!endInput.value) endInput.value = audio.duration.toFixed(1);
+};
+audio.ontimeupdate = () => { highlightActive(); checkLoop(); };
+
+function seek(d){ audio.currentTime = Math.max(0, audio.currentTime + d); }
+function togglePlay(){
+  if (audio.paused){ audio.play(); document.getElementById('playBtn').textContent = '⏸ Szünet'; }
+  else { audio.pause(); document.getElementById('playBtn').textContent = '▶ Lejátszás'; }
+}
+
+function parseLyrics(){
+  const raw = document.getElementById('lyricInput').value.split('\n');
+  const newVerses = [];
+  let current = null;
+  raw.forEach(rawLine => {
+    const line = rawLine.trim();
+    if (!line) return;
+    if (line.includes('|')) {
+      if (!current) { current = { title: 'Versszak', manualStart: null, manualEnd: null, lines: [] }; newVerses.push(current); }
+      const parts = line.split('|');
+      const text = parts[0].trim();
+      const hungarian = (parts[1] || '').trim();
+      current.lines.push({ text, hungarian, start: null });
+    } else {
+      current = { title: line.replace(/^##\s*/, ''), manualStart: null, manualEnd: null, lines: [] };
+      newVerses.push(current);
+    }
+  });
+
+  // meglévő időzítések (és versszak-határok) megtartása frissítéskor
+  newVerses.forEach((v, vi) => {
+    const oldV = verses[vi];
+    if (oldV) {
+      v.manualStart = (oldV.manualStart !== undefined) ? oldV.manualStart : null;
+      v.manualEnd = (oldV.manualEnd !== undefined) ? oldV.manualEnd : null;
+    }
+    v.lines.forEach((l, li) => {
+      const oldL = oldV && oldV.lines[li];
+      if (oldL && oldL.text === l.text) l.start = oldL.start;
+    });
+  });
+
+  verses = newVerses;
+  render();
+}
+
+function flatLines(){
+  const flat = [];
+  verses.forEach((v, vi) => v.lines.forEach((l, li) => flat.push({v, l, vi, li})));
+  return flat;
+}
+
+function computeEnds(){
+  // egy sor vége = a KÖVETKEZŐ MÁR IDŐZÍTETT sor eleje; ha nincs több időzített sor, a dal vége
+  const flat = flatLines();
+  const songEnd = parseFloat(document.getElementById('songEnd').value) || 0;
+  flat.forEach((item, i) => {
+    let end = songEnd;
+    for (let j = i + 1; j < flat.length; j++) {
+      if (flat[j].l.start !== null) { end = flat[j].l.start; break; }
+    }
+    item.end = end;
+    item.timed = item.l.start !== null;
+  });
+  return flat;
+}
+
+// Versszak-határok: alapból az első/utolsó sorból számolva, DE felülírható
+// (mert pl. a versszak végén lévő szóló nem kell bele a loopba)
+function verseBounds(flat){
+  const bounds = [];
+  verses.forEach((v, vi) => {
+    const items = flat.filter(it => it.vi === vi);
+    const firstTimed = items.find(it => it.l.start !== null);
+    const autoStart = firstTimed ? firstTimed.l.start : null;
+    const autoEnd = items.length ? items[items.length - 1].end : null;
+    const effStart = v.manualStart !== null ? v.manualStart : autoStart;
+    const effEnd = v.manualEnd !== null ? v.manualEnd : autoEnd;
+    bounds[vi] = { autoStart, autoEnd, effStart, effEnd };
+  });
+  return bounds;
+}
+
+function render(){
+  const flat = computeEnds();
+  const vBounds = verseBounds(flat);
+  const container = document.getElementById('verseList');
+  container.innerHTML = '';
+  let idx = 0;
+  verses.forEach((v, vi) => {
+    const b = vBounds[vi];
+    const vDiv = document.createElement('div');
+    vDiv.className = 'bg-white border rounded-xl p-3';
+
+    const titleInput = document.createElement('input');
+    titleInput.value = v.title;
+    titleInput.className = 'w-full border-b p-1 mb-2 font-bold text-violet-700 text-sm';
+    titleInput.onchange = (e) => { v.title = e.target.value; };
+    vDiv.appendChild(titleInput);
+
+    // Versszak-szintű start/end + loop (ide nyúlj, ha a szólót ki akarod hagyni a loopból)
+    const vCtrl = document.createElement('div');
+    const isLoopingVerse = loopRegion && loopRegion.kind === 'verse' && loopRegion.vi === vi;
+    vCtrl.className = 'flex items-center gap-1.5 flex-wrap bg-violet-50 border border-violet-200 rounded-lg p-2 mb-2 text-xs' + (isLoopingVerse ? ' loop-active' : '');
+    vCtrl.innerHTML = `
+      <span class="font-bold text-violet-700 flex-shrink-0">Versszak:</span>
+      <input type="number" step="0.1" value="${b.effStart !== null ? b.effStart : ''}" placeholder="eleje" class="w-16 border p-1 rounded" data-vi="${vi}" data-field="manualStart" onchange="updateVerseBound(this)">
+      <button class="bg-yellow-400 px-2 py-1 rounded font-bold" onclick="setVerseBoundNow(${vi},'manualStart')">MOST</button>
+      <span>→</span>
+      <input type="number" step="0.1" value="${b.effEnd !== null ? b.effEnd : ''}" placeholder="vége" class="w-16 border p-1 rounded" data-vi="${vi}" data-field="manualEnd" onchange="updateVerseBound(this)">
+      <button class="bg-yellow-400 px-2 py-1 rounded font-bold" onclick="setVerseBoundNow(${vi},'manualEnd')">MOST</button>
+      <button class="bg-violet-600 text-white px-2 py-1 rounded font-bold ml-auto" onclick="loopVerse(${vi})">${isLoopingVerse ? '⏹ Loop leáll' : '🔁 Loop versszak'}</button>
+      ${(v.manualStart !== null || v.manualEnd !== null) ? `<button class="bg-slate-300 px-2 py-1 rounded font-bold" onclick="resetVerseBound(${vi})">↺ vissza az auto-hoz</button>` : ''}
+    `;
+    vDiv.appendChild(vCtrl);
+
+    v.lines.forEach((l, li) => {
+      const item = flat[idx++];
+      const isLoopingLine = loopRegion && loopRegion.kind === 'line' && loopRegion.vi === vi && loopRegion.li === li;
+      const row = document.createElement('div');
+      row.id = `row-${vi}-${li}`;
+      row.className = 'border rounded-lg p-2.5 mb-1.5' + (item.timed ? '' : ' bg-slate-50') + (isLoopingLine ? ' loop-active' : '');
+      const startVal = l.start === null ? '' : l.start;
+      row.innerHTML = `
+        <div class="flex items-center gap-1.5 mb-1.5 flex-wrap">
+          <input type="number" step="0.1" placeholder="--" value="${startVal}" class="w-16 border p-1.5 rounded text-sm flex-shrink-0" data-vi="${vi}" data-li="${li}" onchange="updateStart(this)">
+          <button class="bg-yellow-500 text-white px-2.5 py-1.5 rounded text-xs font-bold flex-shrink-0" data-vi="${vi}" data-li="${li}" onclick="captureNow(this)">MOST</button>
+          <span class="text-xs text-slate-400 flex-shrink-0">→ ${item.timed || item.end ? item.end.toFixed(1) : '--'}</span>
+          <button class="text-xs font-bold px-2.5 py-1.5 rounded flex-shrink-0 ml-auto ${isLoopingLine ? 'bg-amber-500 text-white' : 'bg-slate-200'}" ${item.l.start === null ? 'disabled' : ''} onclick="loopLine(${vi},${li})">${isLoopingLine ? '⏹' : '🔁'}</button>
+        </div>
+        <div class="text-base sm:text-lg leading-snug break-words">${l.text.replace(/\*\*(.*?)\*\*/g,'<b class="text-violet-600">$1</b>')}</div>
+        <input value="${l.hungarian}" class="w-full text-sm text-slate-400 border-b mt-1 py-0.5" data-vi="${vi}" data-li="${li}" onchange="updateHu(this)">
+      `;
+      vDiv.appendChild(row);
+    });
+    container.appendChild(vDiv);
+  });
+  updateLoopBar();
+  exportData();
+}
+
+function updateStart(el){
+  const vi = el.dataset.vi, li = el.dataset.li;
+  verses[vi].lines[li].start = el.value === '' ? null : (parseFloat(el.value) || 0);
+  render();
+}
+function updateHu(el){
+  const vi = el.dataset.vi, li = el.dataset.li;
+  verses[vi].lines[li].hungarian = el.value;
+  exportData();
+}
+function captureNow(btn){
+  const vi = btn.dataset.vi, li = btn.dataset.li;
+  verses[vi].lines[li].start = parseFloat(audio.currentTime.toFixed(1));
+  render();
+}
+
+function updateVerseBound(el){
+  const vi = el.dataset.vi, field = el.dataset.field;
+  verses[vi][field] = el.value === '' ? null : (parseFloat(el.value) || 0);
+  render();
+}
+function setVerseBoundNow(vi, field){
+  verses[vi][field] = parseFloat(audio.currentTime.toFixed(1));
+  render();
+}
+function resetVerseBound(vi){
+  verses[vi].manualStart = null;
+  verses[vi].manualEnd = null;
+  render();
+}
+
+// ---------- LOOP ----------
+function loopLine(vi, li){
+  const isSame = loopRegion && loopRegion.kind === 'line' && loopRegion.vi === vi && loopRegion.li === li;
+  if (isSame){ stopLoop(); return; }
+  const flat = computeEnds();
+  const item = flat.find(it => it.vi === vi && it.li === li);
+  if (!item || item.l.start === null) return;
+  loopRegion = { kind: 'line', vi, li, start: item.l.start, end: item.end, label: `Sor: ${item.l.text.slice(0,40)}` };
+  audio.currentTime = loopRegion.start;
+  audio.play();
+  document.getElementById('playBtn').textContent = '⏸ Szünet';
+  render();
+}
+function loopVerse(vi){
+  const isSame = loopRegion && loopRegion.kind === 'verse' && loopRegion.vi === vi;
+  if (isSame){ stopLoop(); return; }
+  const flat = computeEnds();
+  const b = verseBounds(flat)[vi];
+  if (b.effStart === null || b.effEnd === null) return;
+  loopRegion = { kind: 'verse', vi, start: b.effStart, end: b.effEnd, label: `Versszak: ${verses[vi].title}` };
+  audio.currentTime = loopRegion.start;
+  audio.play();
+  document.getElementById('playBtn').textContent = '⏸ Szünet';
+  render();
+}
+function stopLoop(){
+  loopRegion = null;
+  render();
+}
+function checkLoop(){
+  if (!loopRegion) return;
+  if (audio.currentTime >= loopRegion.end - 0.03 || audio.currentTime < loopRegion.start - 1){
+    audio.currentTime = loopRegion.start;
+  }
+}
+function nudgeLoop(delta){
+  if (!loopRegion) return;
+  loopRegion.start = Math.max(0, parseFloat((loopRegion.start + delta).toFixed(2)));
+  // szinkronban tartjuk az adatmodellel is, hogy exportkor is a finomított érték menjen ki
+  if (loopRegion.kind === 'line'){
+    verses[loopRegion.vi].lines[loopRegion.li].start = loopRegion.start;
+  } else {
+    verses[loopRegion.vi].manualStart = loopRegion.start;
+  }
+  audio.currentTime = loopRegion.start;
+  render();
+}
+function updateLoopBar(){
+  const bar = document.getElementById('loopBar');
+  if (!loopRegion){ bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  document.getElementById('loopLabel').textContent = `🔁 ${loopRegion.label}  (${loopRegion.start.toFixed(1)}s → ${loopRegion.end.toFixed(1)}s)`;
+}
+
+function highlightActive(){
+  const flat = computeEnds();
+  document.querySelectorAll('.active-line').forEach(n => n.classList.remove('active-line'));
+  const t = audio.currentTime;
+  const hit = flat.find(item => item.timed && t >= item.l.start && t < item.end);
+  const tpEn = document.getElementById('tpEn');
+  const tpHu = document.getElementById('tpHu');
+  if (hit){
+    const el = document.getElementById(`row-${hit.vi}-${hit.li}`);
+    if (el){ el.classList.add('active-line'); el.scrollIntoView({behavior:'smooth', block:'center'}); }
+    tpEn.innerHTML = hit.l.text.replace(/\*\*(.*?)\*\*/g,'<b class="text-violet-300">$1</b>');
+    tpHu.textContent = hit.l.hungarian || '';
+  } else {
+    tpEn.textContent = '– nincs aktív sor –';
+    tpHu.textContent = '';
+  }
+}
+
+function jsStr(s){ return JSON.stringify(s || ''); }
+
+function exportData(){
+  const flat = computeEnds();
+  const vBounds = verseBounds(flat);
+  const untimed = flat.filter(item => !item.timed).length;
+  let idx = 0;
+  const versesText = verses.map((v, vi) => {
+    const b = vBounds[vi];
+    const vStart = b.effStart !== null ? b.effStart : 0;
+    const vEnd = b.effEnd !== null ? b.effEnd : 0;
+    const vLinesText = v.lines.map(l => {
+      const item = flat[idx++];
+      const startOut = l.start === null ? 0 : l.start;
+      return `      { text: ${jsStr(l.text)}, hungarian: ${jsStr(l.hungarian)}, start: ${startOut}, end: ${item.end.toFixed(1)} }`;
+    }).join(',\n');
+    return `  {\n    title: ${jsStr(v.title)}, start: ${vStart}, end: ${vEnd.toFixed ? vEnd.toFixed(1) : vEnd},\n    lines: [\n${vLinesText}\n    ]\n  }`;
+  }).join(',\n');
+  const warning = untimed > 0 ? `// ⚠️ FIGYELEM: ${untimed} sor még NINCS időzítve (0-ra állítva)!\n` : '';
+
+  const id = document.getElementById('songId').value.trim() || 'uj-dal';
+  const title = document.getElementById('songTitle').value.trim() || 'Új Dal';
+  const mp3 = document.getElementById('mp3name').value.trim() || 'fajl.mp3';
+  const fallback = document.getElementById('fallback').value.trim();
+
+  const full = `${warning}{
+  id: ${jsStr(id)},
+  title: ${jsStr(title)},
+  localAudio: ${jsStr(mp3)},
+  fallbackAudio: ${jsStr(fallback)},
+
+  cardsData: [
+    // ide jönnek a tanuló kártyák kézzel, ha kellenek
+  ],
+
+  songStructureData: [
+${versesText}
+  ]
+}`;
+  document.getElementById('exportArea').value = full;
+}
+
+async function copyExport(){
+  exportData();
+  const area = document.getElementById('exportArea');
+  const text = area.value;
+  try {
+    await navigator.clipboard.writeText(text);
+    alert('Kimásolva! Illeszd be az adat.js megfelelő "songs" tömbjébe.');
+  } catch (err) {
+    // fallback régebbi/mobil böngészőkhöz
+    area.select();
+    area.setSelectionRange(0, text.length);
+    try {
+      document.execCommand('copy');
+      alert('Kimásolva! Illeszd be az adat.js megfelelő "songs" tömbjébe.');
+    } catch (err2) {
+      alert('A másolás nem sikerült automatikusan — jelöld ki kézzel a szöveget és másold (hosszan nyomva a mezőt).');
+    }
+  }
+}
+</script>
+</body>
+</html>
