@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dalangol Időzítő</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body{font-family:system-ui,sans-serif}
+  .active-line{border-color:#7c3aed!important;background:#f5f3ff!important}
+  input[type=number]{-moz-appearance:textfield}
+</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+<!-- Hangfájl + vezérlés (mindig látható, fixen a tetején) -->
+<div id="playerPanel" class="fixed top-0 left-0 right-0 bg-slate-50 z-20 pb-3 border-b border-slate-200 shadow-md">
+  <div class="max-w-2xl mx-auto px-3 pt-3">
+    <input type="file" id="audioInput" accept="audio/*" class="w-full mb-2 p-2 border rounded-lg bg-white text-sm">
+    <audio id="audio" controls class="w-full mb-2"></audio>
+    <div class="flex gap-2">
+      <button onclick="seek(-5)" class="flex-1 bg-slate-200 py-2 rounded-lg font-bold">-5s</button>
+      <button onclick="seek(5)" class="flex-1 bg-slate-200 py-2 rounded-lg font-bold">+5s</button>
+      <button onclick="togglePlay()" id="playBtn" class="flex-1 bg-violet-600 text-white py-2 rounded-lg font-bold">▶ Lejátszás</button>
+    </div>
+    <div class="flex gap-2 mt-2" id="speedControls">
+      <button onclick="setSpeed(0.5, this)" class="speed-btn flex-1 bg-slate-200 py-1.5 rounded-lg font-bold text-sm">0.5x</button>
+      <button onclick="setSpeed(0.75, this)" class="speed-btn flex-1 bg-slate-200 py-1.5 rounded-lg font-bold text-sm">0.75x</button>
+      <button onclick="setSpeed(1, this)" class="speed-btn flex-1 bg-violet-600 text-white py-1.5 rounded-lg font-bold text-sm">1x</button>
+    </div>
+    <div id="loopStatus" class="hidden mt-2 bg-pink-50 border border-pink-300 text-pink-700 text-xs font-bold rounded-lg p-2 flex justify-between items-center">
+      <span id="loopStatusText"></span>
+      <button onclick="stopLoop()" class="bg-pink-600 text-white px-2 py-1 rounded text-xs flex-shrink-0 ml-2">⏹ Leállítás</button>
+    </div>
+  </div>
+</div>
+
+<div class="max-w-2xl mx-auto p-3 pb-24" id="mainContent" style="padding-top: 260px;">
+
+  <h1 class="text-xl font-black mb-3 text-violet-700">🎧 Dalangol Időzítő</h1>
+
+  <!-- Dal metaadatok -->
+  <div class="bg-white border rounded-xl p-3 mb-4 space-y-2">
+    <h2 class="font-bold text-sm text-slate-500">Dal adatai</h2>
+    <input id="songId" placeholder="dal id (pl. hipochondria)" class="w-full border p-2 rounded text-sm">
+    <input id="songTitle" placeholder="Dal címe" class="w-full border p-2 rounded text-sm">
+    <input id="mp3name" placeholder="mp3 fájlnév (pl. Hipochondria.mp3)" class="w-full border p-2 rounded text-sm">
+    <input id="fallback" placeholder="Tartalék mp3 link (csak ha külső szerveren is van, egyébként hagyd üresen)" class="w-full border p-2 rounded text-sm">
+  </div>
+
+  <!-- Szövegbevitel -->
+  <div class="bg-white border rounded-xl p-3 mb-4">
+    <h2 class="font-bold text-sm text-slate-500 mb-2">Dalszöveg bevitele</h2>
+    <p class="text-xs text-slate-400 mb-2">
+      Új versszak: írj egy önálló sort <code class="bg-slate-100 px-1">|</code> jel NÉLKÜL (pl. <code class="bg-slate-100 px-1">Refrén</code> vagy <code class="bg-slate-100 px-1">## Refrén</code>)<br>
+      Énekelt sor: <code class="bg-slate-100 px-1">angol szöveg | magyar fordítás</code><br>
+      <span class="text-violet-500 font-bold">Refrén/Refrain</span> című versszakokban a <code class="bg-slate-100 px-1">**kulcsszó**</code> kiemelést a program automatikusan eltávolítja — a lejátszóban a refrén egyben, kulcsszó nélkül jelenik meg.
+    </p>
+    <textarea id="lyricInput" class="w-full h-40 border p-2 rounded-lg font-mono text-xs" placeholder="Bevezető
+I check my body every hour. | Minden órában ellenőrzöm a testem.
+I feel I lose my physical power. | Érzem, hogy elveszítem a fizikai erőmet.
+
+Refrén
+I am terribly **unwell** tonight, | Szörnyen rosszul vagyok ma éjjel,
+..."></textarea>
+    <button onclick="parseLyrics()" class="w-full mt-2 bg-slate-800 text-white py-2 rounded-lg font-bold">Betöltés / Frissítés</button>
+  </div>
+
+  <!-- Kulcsszavak (kártyák) -->
+  <div class="bg-white border rounded-xl p-3 mb-4">
+    <h2 class="font-bold text-sm text-slate-500 mb-2">Kulcsszavak (kártyákhoz)</h2>
+    <p class="text-xs text-slate-400 mb-2">
+      Soronként: <code class="bg-slate-100 px-1">angol szó - magyar fordítás</code><br>
+      Az angol szónak pontosan egyeznie kell (kis/nagybetűtől eltekintve) a szövegben <code class="bg-slate-100 px-1">**így**</code> kiemelt szóval — abból a sorból veszi automatikusan az időzítést és a versszakot.<br>
+      Refrénben lévő kulcsszó nem kereshető meg (a refrénekből a program eltávolítja a kiemelést).
+    </p>
+    <textarea id="keywordInput" class="w-full h-32 border p-2 rounded-lg font-mono text-xs" placeholder="fatigue - kimerültség
+phalange - ujjpercsont
+vertigo - szédülés" onchange="exportData()"></textarea>
+  </div>
+
+  <!-- Sorok listája -->
+  <div id="verseList" class="space-y-4 mb-4"></div>
+
+  <!-- Dal vége -->
+  <div class="bg-white border rounded-xl p-3 mb-4 flex items-center gap-2">
+    <label class="text-sm font-bold text-slate-500 flex-shrink-0">Utolsó sor vége (mp):</label>
+    <input type="number" step="0.1" id="songEnd" class="border p-2 rounded w-28 text-sm" onchange="render()">
+    <button onclick="document.getElementById('songEnd').value = audio.currentTime.toFixed(1); render();" class="bg-yellow-500 text-white px-3 py-2 rounded-lg text-sm font-bold">MOST</button>
+  </div>
+
+  <!-- Export -->
+  <div class="bg-white border rounded-xl p-3">
+    <h2 class="font-bold mb-2">Exportálás (illeszd be az adat.js-be)</h2>
+    <textarea id="exportArea" class="w-full h-56 p-2 border rounded font-mono text-xs mb-2 bg-slate-50"></textarea>
+    <div class="grid grid-cols-2 gap-2">
+      <button onclick="exportData()" class="bg-purple-600 text-white py-2 rounded-lg font-bold">Export frissítése</button>
+      <button onclick="copyExport()" class="bg-green-600 text-white py-2 rounded-lg font-bold">Másolás</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const audio = document.getElementById('audio');
+let verses = []; // [{title, lines:[{text,hungarian,start}]}]
+
+// A fix lejátszó panel magassága változhat (pl. loop-sáv megjelenése), ezért
+// dinamikusan igazítjuk a tartalom felső paddingjét, hogy semmi ne csússzon alá.
+function adjustContentPadding(){
+  const panel = document.getElementById('playerPanel');
+  const content = document.getElementById('mainContent');
+  if (panel && content) content.style.paddingTop = (panel.offsetHeight + 20) + 'px';
+}
+window.addEventListener('load', adjustContentPadding);
+window.addEventListener('resize', adjustContentPadding);
+new ResizeObserver(adjustContentPadding).observe(document.getElementById('playerPanel'));
+
+// Mobil billentyűzet be/kikapcsolásakor a "fixed" pozíció el tud csúszni,
+// mert nem a valódi látható (visual) viewport tetejéhez igazodik.
+// Ezzel mindig a ténylegesen látható terület tetejéhez rögzítjük a panelt.
+if (window.visualViewport) {
+  const panel = document.getElementById('playerPanel');
+  function pinPanelToViewport(){
+    panel.style.top = window.visualViewport.offsetTop + 'px';
+  }
+  window.visualViewport.addEventListener('resize', pinPanelToViewport);
+  window.visualViewport.addEventListener('scroll', pinPanelToViewport);
+  pinPanelToViewport();
+}
+
+function isRefrainTitle(title){
+  return /^refr/i.test((title || '').trim());
+}
+function stripKeywordMarkup(text){
+  return (text || '').replace(/\*\*(.*?)\*\*/g, '$1');
+}
+function normalizePipes(line){
+  // mobil billentyűzeteken/autokorrektoron gyakran más karakter jön be "|" helyett
+  return line.replace(/[¦│｜︱]/g, '|');
+}
+
+document.getElementById('audioInput').onchange = (e) => {
+  if (e.target.files.length > 0) {
+    audio.src = URL.createObjectURL(e.target.files[0]);
+    setSpeed(1);
+  }
+};
+
+function setSpeed(rate, btnEl){
+  audio.playbackRate = rate;
+  document.querySelectorAll('.speed-btn').forEach(btn => {
+    btn.classList.remove('bg-violet-600', 'text-white');
+    btn.classList.add('bg-slate-200');
+  });
+  if (btnEl){ btnEl.classList.remove('bg-slate-200'); btnEl.classList.add('bg-violet-600','text-white'); }
+  else {
+    const target = [...document.querySelectorAll('.speed-btn')].find(b => b.textContent.trim() === rate + 'x');
+    if (target){ target.classList.remove('bg-slate-200'); target.classList.add('bg-violet-600','text-white'); }
+  }
+}
+audio.onloadedmetadata = () => {
+  const endInput = document.getElementById('songEnd');
+  if (!endInput.value) endInput.value = audio.duration.toFixed(1);
+};
+audio.ontimeupdate = onTimeUpdate;
+
+function seek(d){ audio.currentTime = Math.max(0, audio.currentTime + d); }
+function togglePlay(){
+  if (audio.paused){ audio.play(); document.getElementById('playBtn').textContent = '⏸ Szünet'; }
+  else { audio.pause(); document.getElementById('playBtn').textContent = '▶ Lejátszás'; }
+}
+
+function parseLyrics(){
+  const raw = document.getElementById('lyricInput').value.split('\n');
+  const newVerses = [];
+  let current = null;
+  raw.forEach(rawLine => {
+    const line = normalizePipes(rawLine.trim());
+    if (!line) return;
+    if (line.includes('|')) {
+      // sor angol | magyar formátumban -> énekelt sor
+      if (!current) { current = { title: 'Versszak', lines: [], startOverride: null, endOverride: null }; newVerses.push(current); }
+      const parts = line.split('|');
+      let text = parts[0].trim();
+      let hungarian = (parts[1] || '').trim();
+      if (isRefrainTitle(current.title)) {
+        text = stripKeywordMarkup(text);
+        hungarian = stripKeywordMarkup(hungarian);
+      }
+      current.lines.push({ text, hungarian, start: null });
+    } else {
+      // nincs benne "|" -> versszak/refrén cím (## opcionális, csak dísz)
+      current = { title: line.replace(/^##\s*/, ''), lines: [], startOverride: null, endOverride: null };
+      newVerses.push(current);
+    }
+  });
+
+  // meglévő időzítések megtartása, ha a szöveg egyezik (frissítéskor ne vesszen el)
+  newVerses.forEach((v, vi) => {
+    v.lines.forEach((l, li) => {
+      const oldV = verses[vi];
+      const oldL = oldV && oldV.lines[li];
+      if (oldL && oldL.text === l.text) l.start = oldL.start;
+    });
+    const oldV = verses[vi];
+    if (oldV && oldV.title === v.title) {
+      v.startOverride = (oldV.startOverride !== undefined) ? oldV.startOverride : null;
+      v.endOverride = (oldV.endOverride !== undefined) ? oldV.endOverride : null;
+    }
+  });
+
+  verses = newVerses;
+  render();
+}
+
+function flatLines(){
+  const flat = [];
+  verses.forEach((v, vi) => v.lines.forEach((l, li) => flat.push({v, l, vi, li})));
+  return flat;
+}
+
+function computeEnds(){
+  // egy sor vége = a KÖVETKEZŐ MÁR IDŐZÍTETT sor eleje; ha nincs több időzített sor, a dal vége
+  const flat = flatLines();
+  const songEnd = parseFloat(document.getElementById('songEnd').value) || 0;
+
+  // refrénnél a "Versszak eleje" adja a sorok kezdő időpontját is,
+  // hogy az automatikus időzítés-számítás ne ugorja át az egész refrént
+  verses.forEach((v) => {
+    if (isRefrainTitle(v.title) && v.lines.length && v.lines[0].start === null
+        && v.startOverride !== null && v.startOverride !== undefined) {
+      v.lines[0].start = v.startOverride;
+    }
+  });
+
+  flat.forEach((item, i) => {
+    let end = songEnd;
+    for (let j = i + 1; j < flat.length; j++) {
+      if (flat[j].l.start !== null) { end = flat[j].l.start; break; }
+    }
+    item.end = end;
+    item.timed = item.l.start !== null || isRefrainTitle(item.v.title);
+  });
+
+  // ha egy versszaknak kézzel meg van adva a vége (pl. szóló miatt), az utolsó sora
+  // NE a következő versszak kezdéséhez igazodjon, hanem a versszak megadott végéhez
+  verses.forEach((v, vi) => {
+    if (v.endOverride === null || v.endOverride === undefined) return;
+    for (let i = flat.length - 1; i >= 0; i--) {
+      if (flat[i].vi === vi) { flat[i].end = v.endOverride; break; }
+    }
+  });
+
+  return flat;
+}
+
+function verseBounds(vi, flat){
+  const items = flat.filter(item => item.vi === vi);
+  const defaultStart = (items.length && items[0].l.start !== null) ? items[0].l.start : 0;
+  const defaultEnd = items.length ? items[items.length - 1].end : 0;
+  const v = verses[vi];
+  const start = (v.startOverride !== null && v.startOverride !== undefined) ? v.startOverride : defaultStart;
+  const end = (v.endOverride !== null && v.endOverride !== undefined) ? v.endOverride : defaultEnd;
+  return { defaultStart, defaultEnd, start, end };
+}
+
+function lineBounds(vi, li, flat){
+  const item = flat.find(it => it.vi === vi && it.li === li);
+  if (!item) return null;
+  return { start: item.l.start !== null ? item.l.start : 0, end: item.end };
+}
+
+function render(){
+  const flat = computeEnds();
+  const container = document.getElementById('verseList');
+  container.innerHTML = '';
+  let idx = 0;
+  verses.forEach((v, vi) => {
+    const vDiv = document.createElement('div');
+    const looksLikeMistake = v.lines.length === 0 && !isRefrainTitle(v.title) && v.title.length > 25;
+    vDiv.className = 'bg-white border rounded-xl p-3'
+      + (isRefrainTitle(v.title) ? ' ring-2 ring-violet-200' : '')
+      + (looksLikeMistake ? ' ring-2 ring-rose-300' : '');
+    const titleRow = document.createElement('div');
+    titleRow.className = 'flex items-center gap-2 mb-2';
+    const titleInput = document.createElement('input');
+    titleInput.value = v.title;
+    titleInput.className = 'flex-1 border-b p-1 font-bold text-violet-700 text-sm';
+    titleInput.onchange = (e) => { v.title = e.target.value; render(); };
+    titleRow.appendChild(titleInput);
+    if (isRefrainTitle(v.title)) {
+      const badge = document.createElement('span');
+      badge.className = 'text-[10px] font-bold bg-violet-100 text-violet-600 px-2 py-1 rounded-lg flex-shrink-0 whitespace-nowrap';
+      badge.textContent = '🔁 Refrén — egyben időzítve, kulcsszó nélkül, egyben jelenik meg';
+      titleRow.appendChild(badge);
+    }
+    vDiv.appendChild(titleRow);
+    if (looksLikeMistake) {
+      const warn = document.createElement('p');
+      warn.className = 'text-[11px] font-bold text-rose-500 mb-2';
+      warn.textContent = '⚠️ Ennek a "versszaknak" nincs egyetlen sora sem — valószínűleg hiányzik a | jel ebből a sorból, ezért címként (nem énekelt sorként) értelmezte a program.';
+      vDiv.appendChild(warn);
+    }
+
+    const vb = verseBounds(vi, flat);
+    const vHeader = document.createElement('div');
+    vHeader.className = 'mb-2';
+    vHeader.innerHTML = `
+      <div class="flex items-center gap-1.5 mb-1.5 flex-wrap text-xs">
+        <label class="text-slate-500 font-bold flex-shrink-0">Versszak eleje:</label>
+        <input type="number" step="0.1" placeholder="${vb.defaultStart.toFixed ? vb.defaultStart.toFixed(1) : vb.defaultStart}" value="${v.startOverride === null || v.startOverride === undefined ? '' : v.startOverride}" class="verse-start-input w-16 border p-1 rounded" data-vi="${vi}" onchange="updateVerseStart(this)">
+        <button class="bg-yellow-500 text-white px-2 py-1 rounded font-bold flex-shrink-0" data-vi="${vi}" onclick="captureVerseStart(this)">MOST</button>
+      </div>
+    `;
+    vDiv.appendChild(vHeader);
+
+    v.lines.forEach((l, li) => {
+      const item = flat[idx++];
+      const row = document.createElement('div');
+      row.id = `row-${vi}-${li}`;
+
+      if (isRefrainTitle(v.title)) {
+        row.className = 'rounded-lg p-2 mb-1 bg-violet-50/60';
+        row.innerHTML = `
+          <div class="text-sm sm:text-base leading-snug break-words">${l.text}</div>
+          <input value="${l.hungarian}" class="w-full text-xs sm:text-sm text-slate-400 border-b mt-1 py-0.5" data-vi="${vi}" data-li="${li}" onchange="updateHu(this)">
+        `;
+        vDiv.appendChild(row);
+        return;
+      }
+
+      row.className = 'border rounded-lg p-2 mb-1' + (item.timed ? '' : ' bg-slate-50');
+      const startVal = l.start === null ? '' : l.start;
+      row.innerHTML = `
+        <div class="flex items-center gap-2 mb-1.5">
+          <input type="number" step="0.1" placeholder="--" value="${startVal}" class="w-16 border p-1.5 rounded text-sm flex-shrink-0" data-vi="${vi}" data-li="${li}" onchange="updateStart(this)">
+          <button class="bg-yellow-500 text-white px-3 py-1.5 rounded text-xs font-bold flex-shrink-0" data-vi="${vi}" data-li="${li}" onclick="captureNow(this)">MOST</button>
+          <span class="text-xs text-slate-400 flex-shrink-0">→ ${item.timed || item.end ? item.end.toFixed(1) : '--'}</span>
+          <button class="loop-btn bg-slate-200 px-2 py-1.5 rounded text-xs font-bold flex-shrink-0 ml-auto" id="loopbtn-line-${vi}-${li}" data-vi="${vi}" data-li="${li}" onclick="toggleLoop('line', ${vi}, ${li}, this)" ${item.timed ? '' : 'disabled title="Előbb időzítsd be a sort"'}>🔁</button>
+        </div>
+        <div class="text-sm sm:text-base leading-snug break-words">${l.text.replace(/\*\*(.*?)\*\*/g,'<b class="text-violet-600">$1</b>')}</div>
+        <input value="${l.hungarian}" class="w-full text-xs sm:text-sm text-slate-400 border-b mt-1 py-0.5" data-vi="${vi}" data-li="${li}" onchange="updateHu(this)">
+      `;
+      vDiv.appendChild(row);
+    });
+
+    const vFooter = document.createElement('div');
+    vFooter.className = 'mt-2 pt-2 border-t border-slate-100';
+    vFooter.innerHTML = `
+      <div class="flex items-center gap-1.5 mb-1.5 flex-wrap text-xs">
+        <label class="text-slate-500 font-bold flex-shrink-0">Versszak vége:</label>
+        <input type="number" step="0.1" placeholder="${vb.defaultEnd.toFixed ? vb.defaultEnd.toFixed(1) : vb.defaultEnd}" value="${v.endOverride === null || v.endOverride === undefined ? '' : v.endOverride}" class="verse-end-input w-16 border p-1 rounded" data-vi="${vi}" onchange="updateVerseEnd(this)">
+        <button class="bg-yellow-500 text-white px-2 py-1 rounded font-bold flex-shrink-0" data-vi="${vi}" onclick="captureVerseEnd(this)">MOST</button>
+      </div>
+      <button class="loop-btn w-full bg-slate-200 py-1.5 rounded-lg font-bold text-xs" id="loopbtn-verse-${vi}" data-vi="${vi}" onclick="toggleLoop('verse', ${vi}, null, this)">🔁 Versszak loopolása (${vb.start.toFixed(1)}s → ${vb.end.toFixed(1)}s)</button>
+    `;
+    vDiv.appendChild(vFooter);
+
+    container.appendChild(vDiv);
+  });
+  exportData();
+  updateLoopUI();
+  adjustContentPadding();
+  // biztonsági újraellenőrzés, ha a böngésző még nem véglegesítette a layoutot
+  requestAnimationFrame(adjustContentPadding);
+}
+
+function updateStart(el){
+  const vi = el.dataset.vi, li = el.dataset.li;
+  verses[vi].lines[li].start = el.value === '' ? null : (parseFloat(el.value) || 0);
+  render();
+}
+function updateHu(el){
+  const vi = el.dataset.vi, li = el.dataset.li;
+  verses[vi].lines[li].hungarian = el.value;
+  exportData();
+}
+function captureNow(btn){
+  const vi = btn.dataset.vi, li = btn.dataset.li;
+  verses[vi].lines[li].start = parseFloat(audio.currentTime.toFixed(1));
+  render();
+}
+
+function onTimeUpdate(){
+  const flat = computeEnds();
+  const t = audio.currentTime;
+
+  // aktív sor kiemelése (görgetés nélkül — a felhasználó szabadon görgethet)
+  document.querySelectorAll('.active-line').forEach(n => n.classList.remove('active-line'));
+  const hit = flat.find(item => item.timed && t >= item.l.start && t < item.end);
+  if (hit){
+    const el = document.getElementById(`row-${hit.vi}-${hit.li}`);
+    if (el) el.classList.add('active-line');
+  }
+
+  // loop kezelése
+  if (activeLoop){
+    const bounds = activeLoop.type === 'line'
+      ? lineBounds(activeLoop.vi, activeLoop.li, flat)
+      : verseBounds(activeLoop.vi, flat);
+    if (bounds && bounds.end > bounds.start && t >= bounds.end - 0.03){
+      audio.currentTime = bounds.start;
+    }
+  }
+}
+
+let activeLoop = null; // {type:'line'|'verse', vi, li}
+
+function toggleLoop(type, vi, li, btn){
+  const same = activeLoop && activeLoop.type === type && activeLoop.vi === vi && activeLoop.li === li;
+  if (same){
+    activeLoop = null;
+  } else {
+    activeLoop = { type, vi, li };
+    const flat = computeEnds();
+    const bounds = type === 'line' ? lineBounds(vi, li, flat) : verseBounds(vi, flat);
+    if (bounds){
+      audio.currentTime = bounds.start;
+      if (audio.paused){ audio.play(); document.getElementById('playBtn').textContent = '⏸ Szünet'; }
+    }
+  }
+  updateLoopUI();
+}
+
+function stopLoop(){
+  activeLoop = null;
+  updateLoopUI();
+}
+
+function updateLoopUI(){
+  document.querySelectorAll('.loop-btn').forEach(b => {
+    b.classList.remove('bg-pink-600', 'text-white');
+    b.classList.add('bg-slate-200');
+  });
+  const status = document.getElementById('loopStatus');
+  const statusText = document.getElementById('loopStatusText');
+  if (activeLoop){
+    const id = activeLoop.type === 'line' ? `loopbtn-line-${activeLoop.vi}-${activeLoop.li}` : `loopbtn-verse-${activeLoop.vi}`;
+    const btn = document.getElementById(id);
+    if (btn){ btn.classList.remove('bg-slate-200'); btn.classList.add('bg-pink-600', 'text-white'); }
+    const flat = computeEnds();
+    const bounds = activeLoop.type === 'line' ? lineBounds(activeLoop.vi, activeLoop.li, flat) : verseBounds(activeLoop.vi, flat);
+    if (bounds){
+      statusText.textContent = `🔁 Loop: ${bounds.start.toFixed(1)}s → ${bounds.end.toFixed(1)}s`;
+    }
+    status.classList.remove('hidden');
+  } else {
+    status.classList.add('hidden');
+  }
+}
+
+function captureVerseStart(btn){
+  const vi = btn.dataset.vi;
+  verses[vi].startOverride = parseFloat(audio.currentTime.toFixed(1));
+  render();
+}
+function captureVerseEnd(btn){
+  const vi = btn.dataset.vi;
+  verses[vi].endOverride = parseFloat(audio.currentTime.toFixed(1));
+  render();
+}
+function updateVerseStart(el){
+  const vi = el.dataset.vi;
+  verses[vi].startOverride = el.value === '' ? null : (parseFloat(el.value) || 0);
+  render();
+}
+function updateVerseEnd(el){
+  const vi = el.dataset.vi;
+  verses[vi].endOverride = el.value === '' ? null : (parseFloat(el.value) || 0);
+  render();
+}
+
+function buildCardsData(flat){
+  const raw = document.getElementById('keywordInput').value.split('\n');
+  const pairs = raw.map(l => l.trim()).filter(Boolean).map(l => {
+    const idx = l.indexOf('-');
+    if (idx === -1) return null;
+    const keyword = l.slice(0, idx).trim();
+    const keywordHungarian = l.slice(idx + 1).trim();
+    if (!keyword || !keywordHungarian) return null;
+    return { keyword, keywordHungarian };
+  }).filter(Boolean);
+
+  const usedLineKeys = new Set();
+  const cards = [];
+  const missing = [];
+
+  pairs.forEach(p => {
+    let found = null;
+    for (const item of flat) {
+      const key = `${item.vi}-${item.li}`;
+      if (usedLineKeys.has(key)) continue;
+      if (isRefrainTitle(verses[item.vi].title)) continue;
+      const m = item.l.text.match(/\*\*(.*?)\*\*/);
+      if (m && m[1].toLowerCase() === p.keyword.toLowerCase()) {
+        found = item;
+        usedLineKeys.add(key);
+        break;
+      }
+    }
+    if (!found) { missing.push(p.keyword); return; }
+
+    // megpróbáljuk a magyar mondatban is kiemelni a fordítást, ha szó szerint megtalálható
+    let hungarianLine = found.l.hungarian || '';
+    const escaped = p.keywordHungarian.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const hRegex = new RegExp(escaped, 'i');
+    if (hRegex.test(hungarianLine)) {
+      hungarianLine = hungarianLine.replace(hRegex, (match) => `**${match}**`);
+    }
+
+    cards.push({
+      keyword: p.keyword,
+      keywordHungarian: p.keywordHungarian,
+      english: found.l.text,
+      hungarian: hungarianLine,
+      startTime: found.l.start === null ? 0 : found.l.start,
+      endTime: found.end,
+      verseIndex: found.vi,
+      hunMatched: hRegex.test(found.l.hungarian || '')
+    });
+  });
+
+  return { cards, missing };
+}
+
+function jsStr(s){ return JSON.stringify(s || ''); }
+
+function exportData(){
+  const flat = computeEnds();
+  const untimed = flat.filter(item => !item.timed).length;
+  let idx = 0;
+  const versesText = verses.map((v, vi) => {
+    const vb = verseBounds(vi, flat);
+    const isRefrain = isRefrainTitle(v.title);
+    const vStart = Number(vb.start).toFixed(1);
+    const vEnd = Number(vb.end).toFixed(1);
+    const vLinesText = v.lines.map(l => {
+      const item = flat[idx++];
+      const text = isRefrain ? stripKeywordMarkup(l.text) : l.text;
+      const hungarian = isRefrain ? stripKeywordMarkup(l.hungarian) : l.hungarian;
+      const startOut = isRefrain ? vStart : (l.start === null ? 0 : l.start);
+      const endOut = isRefrain ? vEnd : item.end.toFixed(1);
+      return `      { text: ${jsStr(text)}, hungarian: ${jsStr(hungarian)}, start: ${startOut}, end: ${endOut} }`;
+    }).join(',\n');
+    return `  {\n    title: ${jsStr(v.title)}, start: ${vStart}, end: ${vEnd},\n    lines: [\n${vLinesText}\n    ]\n  }`;
+  }).join(',\n');
+  const warning = untimed > 0 ? `// ⚠️ FIGYELEM: ${untimed} sor még NINCS időzítve (0-ra állítva)!\n` : '';
+
+  const { cards, missing } = buildCardsData(flat);
+  const cardsText = cards.map(c => {
+    const hunNote = c.hunMatched ? '' : ` // ⚠️ ellenőrizd a magyar kiemelést, nem találtam szó szerint`;
+    return `    { keyword: ${jsStr(c.keyword)}, keywordHungarian: ${jsStr(c.keywordHungarian)}, english: ${jsStr(c.english)}, hungarian: ${jsStr(c.hungarian)}, startTime: ${c.startTime}, endTime: ${c.endTime.toFixed(1)}, verseIndex: ${c.verseIndex} },${hunNote}`;
+  }).join('\n');
+  const cardsBlock = cards.length ? cardsText : '    // ide jönnek a tanuló kártyák, ha megadod a kulcsszavakat fent';
+  const missingWarning = missing.length ? `// ⚠️ Nem található **${missing.join('**, **')}** kiemelés a szövegben, ezekhez nem készült kártya!\n` : '';
+
+  const id = document.getElementById('songId').value.trim() || 'uj-dal';
+  const title = document.getElementById('songTitle').value.trim() || 'Új Dal';
+  const mp3 = document.getElementById('mp3name').value.trim() || 'fajl.mp3';
+  const fallback = document.getElementById('fallback').value.trim();
+
+  const full = `${warning}${missingWarning}{
+  id: ${jsStr(id)},
+  title: ${jsStr(title)},
+  localAudio: ${jsStr(mp3)},
+  fallbackAudio: ${jsStr(fallback)},
+
+  cardsData: [
+${cardsBlock}
+  ],
+
+  songStructureData: [
+${versesText}
+  ]
+}`;
+  document.getElementById('exportArea').value = full;
+}
+
+function copyExport(){
+  exportData();
+  const area = document.getElementById('exportArea');
+  area.select();
+  document.execCommand('copy');
+  alert('Kimásolva! Illeszd be az adat.js megfelelő "songs" tömbjébe.');
+}
+</script>
+</body>
+</html>
